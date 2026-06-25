@@ -4,6 +4,7 @@ import { CanvasRenderingTarget2D, MediaCoordinatesRenderingScope } from 'fancy-c
 import { Coordinate } from '../model/coordinate';
 import { PriceLinePillsOptions } from '../model/price-line-options';
 
+import { LineStyle, setLineStyle } from './draw-line';
 import { IPaneRenderer } from './ipane-renderer';
 
 const ROW_H = 18;
@@ -22,6 +23,9 @@ export interface OrderPillsRendererData {
 	paneWidth: number;
 	visible: boolean;
 	isMoving?: boolean;
+	lineVisible?: boolean;
+	lineWidth?: number;
+	lineStyle?: LineStyle;
 }
 
 interface RowLayout {
@@ -97,10 +101,69 @@ function roundRect(
 }
 
 function fillBoldText(ctx: CanvasRenderingContext2D, text: string, x: number, y: number): void {
-	ctx.lineWidth = 0.35;
-	ctx.strokeStyle = ctx.fillStyle;
-	ctx.strokeText(text, x, y);
 	ctx.fillText(text, x, y);
+}
+
+function drawRowContents(
+	ctx: CanvasRenderingContext2D,
+	row: RowLayout,
+	data: OrderPillsRendererData,
+	localTop: number
+): void {
+	const pills = data.pills;
+	const body = pills.body;
+	const quantity = pills.quantity;
+	const cancel = pills.cancel;
+	const x = 0;
+	const accent = data.accentColor;
+	const bodyBg = body.backgroundColor || accent;
+	const qtyBg = quantity.backgroundColor || accent;
+	const cancelLeft = x + row.totalW - CANCEL_W;
+	const shellBorder = hasShellBorder(body.borderColor);
+	const qtyDiv = dividerColor(quantity.borderColor) || dividerColor(body.borderColor);
+
+	roundRect(ctx, x, localTop, row.totalW, ROW_H, 2, 2, 2, 2);
+	ctx.fillStyle = bodyBg;
+	ctx.fill();
+
+	if (shellBorder) {
+		ctx.strokeStyle = body.borderColor;
+		ctx.lineWidth = 1;
+		ctx.stroke();
+	}
+
+	if (row.bodyW > 0) {
+		ctx.fillStyle = body.textColor || '#ffffff';
+		ctx.font = `${resolveFontWeight(body.fontWeight)} ${resolveFontSize(body.fontSize)}px ${resolveFontFamily(body.fontFamily)}`;
+		ctx.textAlign = 'center';
+		ctx.textBaseline = 'middle';
+		fillBoldText(ctx, row.bodyText, x + row.bodyW / 2, localTop + ROW_H / 2);
+	}
+
+	if (row.qtyW > 0) {
+		ctx.fillStyle = qtyBg;
+		const qtyLeft = x + row.bodyW + (row.bodyW ? GAP : 0);
+		ctx.fillRect(qtyLeft, localTop, row.qtyW, ROW_H);
+		if (qtyDiv) {
+			ctx.fillStyle = qtyDiv;
+			ctx.fillRect(qtyLeft, localTop, 1, ROW_H);
+		}
+		ctx.fillStyle = quantity.textColor || '#ffffff';
+		ctx.font = `${resolveFontWeight(quantity.fontWeight)} ${resolveFontSize(quantity.fontSize)}px ${resolveFontFamily(quantity.fontFamily)}`;
+		ctx.textAlign = 'center';
+		ctx.textBaseline = 'middle';
+		fillBoldText(ctx, row.qtyText, qtyLeft + row.qtyW / 2, localTop + ROW_H / 2);
+	}
+
+	if (cancel.visible) {
+		ctx.fillStyle = cancel.backgroundColor;
+		ctx.fillRect(cancelLeft, localTop, CANCEL_W, ROW_H);
+		if (shellBorder) {
+			ctx.fillStyle = body.borderColor;
+			ctx.fillRect(cancelLeft, localTop, 1, ROW_H);
+		}
+		drawCancelIcon(ctx, cancelLeft + CANCEL_W / 2, localTop + ROW_H / 2, cancel.iconColor || '#000000');
+	}
 }
 
 function layoutRow(
@@ -163,11 +226,15 @@ export class OrderPillsRenderer implements IPaneRenderer {
 	private _data: OrderPillsRendererData | null = null;
 	private _cachedLayout: RowLayout | null = null;
 	private _layoutCacheKey: string = '';
+	private _bitmap: HTMLCanvasElement | null = null;
+	private _bitmapKey: string = '';
 
 	public setData(data: OrderPillsRendererData): void {
 		this._data = data;
 		this._cachedLayout = null;
 		this._layoutCacheKey = '';
+		this._bitmap = null;
+		this._bitmapKey = '';
 	}
 
 	/** Update vertical position only (pan/zoom) without invalidating text layout. */
@@ -210,85 +277,79 @@ export class OrderPillsRenderer implements IPaneRenderer {
 		return row;
 	}
 
+	private _bitmapCacheKeyFor(data: OrderPillsRendererData, row: RowLayout): string {
+		return this._layoutCacheKeyFor(data) + '\0' + row.totalW;
+	}
+
+	private _ensureBitmap(
+		row: RowLayout,
+		data: OrderPillsRendererData
+	): HTMLCanvasElement {
+		const key = this._bitmapCacheKeyFor(data, row);
+		if (
+			this._bitmap !== null &&
+			key === this._bitmapKey &&
+			this._bitmap.width === row.totalW &&
+			this._bitmap.height === ROW_H
+		) {
+			return this._bitmap;
+		}
+
+		let canvas = this._bitmap;
+		if (canvas === null || canvas.width !== row.totalW || canvas.height !== ROW_H) {
+			canvas = document.createElement('canvas');
+			this._bitmap = canvas;
+		}
+
+		canvas.width = row.totalW;
+		canvas.height = ROW_H;
+		const bctx = canvas.getContext('2d');
+		if (bctx !== null) {
+			bctx.clearRect(0, 0, row.totalW, ROW_H);
+			drawRowContents(bctx, row, data, 0);
+		}
+
+		this._bitmapKey = key;
+		return canvas;
+	}
+
 	public draw(target: CanvasRenderingTarget2D, isHovered: boolean, hitTestData?: unknown): void {
 		if (this._data === null || !this._data.visible) {
 			return;
 		}
 
-		const layout = target.useMediaCoordinateSpace((scope: MediaCoordinatesRenderingScope) => {
+		target.useMediaCoordinateSpace((scope: MediaCoordinatesRenderingScope) => {
 			const ctx = scope.context;
-			const row = this._resolveLayout(ctx, this._data as OrderPillsRendererData);
-			if (row === null) {
-				return null;
+			const data = this._data as OrderPillsRendererData;
+			const y = Math.round(data.y);
+
+			if (data.lineVisible !== false && data.paneWidth > 0) {
+				ctx.save();
+				ctx.strokeStyle = data.accentColor;
+				ctx.lineWidth = data.lineWidth ?? 1;
+				setLineStyle(ctx, data.lineStyle ?? LineStyle.Solid);
+				ctx.beginPath();
+				ctx.moveTo(0, y);
+				ctx.lineTo(data.paneWidth, y);
+				ctx.stroke();
+				ctx.restore();
 			}
 
-			const data = this._data as OrderPillsRendererData;
-			const pills = data.pills;
-			const body = pills.body;
-			const quantity = pills.quantity;
-			const cancel = pills.cancel;
-			const y = data.y;
-			const top = Math.round(y - ROW_H / 2);
+			const row = this._resolveLayout(ctx, data);
+			if (row === null) {
+				return;
+			}
+
+			const top = Math.round(data.y - ROW_H / 2);
 			const x = Math.round(row.rowLeft);
-			const accent = data.accentColor;
-			const bodyBg = body.backgroundColor || accent;
-			const qtyBg = quantity.backgroundColor || accent;
-			const cancelLeft = x + row.totalW - CANCEL_W;
-			const shellBorder = hasShellBorder(body.borderColor);
-			const qtyDiv = dividerColor(quantity.borderColor) || dividerColor(body.borderColor);
+			const bitmap = this._ensureBitmap(row, data);
 
 			ctx.save();
-			if (data.pills.moving) {ctx.globalAlpha = 0.92;}
-
-			roundRect(ctx, x, top, row.totalW, ROW_H, 2, 2, 2, 2);
-			ctx.fillStyle = bodyBg;
-			ctx.fill();
-
-			if (shellBorder) {
-				ctx.strokeStyle = body.borderColor;
-				ctx.lineWidth = 1;
-				ctx.stroke();
+			if (data.pills.moving) {
+				ctx.globalAlpha = 0.92;
 			}
-
-			if (row.bodyW > 0) {
-				ctx.fillStyle = body.textColor || '#ffffff';
-				ctx.font = `${resolveFontWeight(body.fontWeight)} ${resolveFontSize(body.fontSize)}px ${resolveFontFamily(body.fontFamily)}`;
-				ctx.textAlign = 'center';
-				ctx.textBaseline = 'middle';
-				fillBoldText(ctx, row.bodyText, x + row.bodyW / 2, top + ROW_H / 2);
-			}
-
-			if (row.qtyW > 0) {
-				ctx.fillStyle = qtyBg;
-				const qtyLeft = x + row.bodyW + (row.bodyW ? GAP : 0);
-				ctx.fillRect(qtyLeft, top, row.qtyW, ROW_H);
-				if (qtyDiv) {
-					ctx.fillStyle = qtyDiv;
-					ctx.fillRect(qtyLeft, top, 1, ROW_H);
-				}
-				ctx.fillStyle = quantity.textColor || '#ffffff';
-				ctx.font = `${resolveFontWeight(quantity.fontWeight)} ${resolveFontSize(quantity.fontSize)}px ${resolveFontFamily(quantity.fontFamily)}`;
-				ctx.textAlign = 'center';
-				ctx.textBaseline = 'middle';
-				fillBoldText(ctx, row.qtyText, qtyLeft + row.qtyW / 2, top + ROW_H / 2);
-			}
-
-			if (cancel.visible) {
-				ctx.fillStyle = cancel.backgroundColor;
-				ctx.fillRect(cancelLeft, top, CANCEL_W, ROW_H);
-				if (shellBorder) {
-					ctx.fillStyle = body.borderColor;
-					ctx.fillRect(cancelLeft, top, 1, ROW_H);
-				}
-				drawCancelIcon(ctx, cancelLeft + CANCEL_W / 2, top + ROW_H / 2, cancel.iconColor || '#000000');
-			}
-
+			ctx.drawImage(bitmap, x, top);
 			ctx.restore();
-			return row;
 		});
-
-		if (layout === null) {
-			return;
-		}
 	}
 }

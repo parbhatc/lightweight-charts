@@ -33,6 +33,19 @@ export class CustomPriceLineOrderPillsPaneView implements IPaneView {
 		this._invalidated = true;
 	}
 
+	public updateCoordinate(y: Coordinate): void {
+		if (this._invalidated || !this._rendererData.visible) {
+			return;
+		}
+
+		if (this._rendererData.y === y) {
+			return;
+		}
+
+		this._rendererData.y = y;
+		this._renderer.updateY(y);
+	}
+
 	public renderer(): IPaneRenderer | null {
 		if (!this._series.visible()) {
 			return null;
@@ -80,6 +93,9 @@ export class CustomPriceLineOrderPillsPaneView implements IPaneView {
 		data.accentColor = options.color;
 		data.paneWidth = paneWidth;
 		data.isMoving = Boolean(pills?.moving);
+		data.lineVisible = options.lineVisible;
+		data.lineWidth = options.lineWidth;
+		data.lineStyle = options.lineStyle;
 
 		if (layoutKey !== this._layoutKey) {
 			this._layoutKey = layoutKey;

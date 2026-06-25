@@ -32,6 +32,18 @@ export abstract class SeriesHorizontalLinePaneView implements IPaneView {
 		this._invalidated = true;
 	}
 
+	public updateCoordinate(y: Coordinate): void {
+		if (this._invalidated || !this._lineRendererData.visible) {
+			return;
+		}
+
+		if (this._lineRendererData.y === y) {
+			return;
+		}
+
+		this._lineRendererData.y = y;
+	}
+
 	public renderer(): IPaneRenderer | null {
 		if (!this._series.visible()) {
 			return null;

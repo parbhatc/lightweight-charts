@@ -39,6 +39,7 @@ export class CustomPriceLine {
 	private readonly _priceAxisView: CustomPriceLinePriceAxisView;
 	private readonly _panePriceAxisView: PanePriceAxisView;
 	private readonly _options: StoredPriceLineOptions;
+	private _lastYCoord: Coordinate | null = null;
 
 	public constructor(series: ISeries<SeriesType>, options: StoredPriceLineOptions) {
 		this._series = series;
@@ -53,6 +54,33 @@ export class CustomPriceLine {
 	public applyOptions(options: Partial<StoredPriceLineOptions>): void {
 		merge(this._options, options);
 		syncOrderLineOptionKeys(this._options);
+
+		if (this.isOrderLine() && this._isOrderLineAppearancePatch(options)) {
+			const keys = Object.keys(options);
+			const pillsOnly = keys.every((key: string) => key === 'pills');
+			const needsLine = options.color !== undefined;
+			const needsAxis =
+				this._options.axisLabelVisible &&
+				(options.axisLabelText !== undefined ||
+					options.axisLabelColor !== undefined ||
+					options.color !== undefined);
+
+			if (options.pills !== undefined) {
+				this._orderPillsPaneView.update();
+			}
+			if (needsLine) {
+				this._priceLineView.update();
+			}
+			if (needsAxis) {
+				this._priceAxisView.update();
+			}
+			if (!pillsOnly || needsLine || needsAxis) {
+				this._lastYCoord = this.yCoord();
+			}
+			this._series.model().lightUpdate();
+			return;
+		}
+
 		this.update();
 		this._series.model().lightUpdate();
 	}
@@ -82,9 +110,30 @@ export class CustomPriceLine {
 	}
 
 	public update(): void {
+		this._lastYCoord = this.yCoord();
 		this._priceLineView.update();
 		this._orderPillsPaneView.update();
 		this._priceAxisView.update();
+	}
+
+	/** During time-scale scroll: skip work when price→Y mapping is unchanged. */
+	public updateScrollPosition(): void {
+		const y = this.yCoord();
+		if (y === this._lastYCoord) {
+			return;
+		}
+
+		this._lastYCoord = y;
+		if (y === null) {
+			this.update();
+			return;
+		}
+
+		this._priceLineView.updateCoordinate(y);
+		this._orderPillsPaneView.updateCoordinate(y);
+		if (!this.isOrderLine() || this._options.axisLabelVisible) {
+			this._priceAxisView.update();
+		}
 	}
 
 	public yCoord(): Coordinate | null {
@@ -102,5 +151,21 @@ export class CustomPriceLine {
 		}
 
 		return priceScale.priceToCoordinate(this._options.price, firstValue.value);
+	}
+
+	private _isOrderLineAppearancePatch(options: Partial<StoredPriceLineOptions>): boolean {
+		const keys = Object.keys(options);
+		if (keys.length === 0) {
+			return false;
+		}
+
+		const allowed = new Set([
+			'pills',
+			'color',
+			'axisLabelColor',
+			'axisLabelText',
+			'axisLabelTextColor',
+		]);
+		return keys.every((key: string) => allowed.has(key));
 	}
 }

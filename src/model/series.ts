@@ -537,7 +537,7 @@ export class Series<T extends SeriesType> extends PriceDataSource implements IDe
 		extractPrimitivePaneViews(this._primitives, primitivePaneViewsExtractor, 'top', res);
 
 		const orderLines = this._customPriceLines.filter((line: CustomPriceLine) => line.isOrderLine());
-		res.push(...orderLines.flatMap((line: CustomPriceLine) => [line.paneView(), line.orderPillsPaneView()]));
+		res.push(...orderLines.map((line: CustomPriceLine) => line.orderPillsPaneView()));
 		const animationPaneView = this._lastPriceAnimationPaneView;
 		if (animationPaneView === null || !animationPaneView.visible()) {
 			return res;
@@ -596,7 +596,7 @@ export class Series<T extends SeriesType> extends PriceDataSource implements IDe
 		const topPaneViews: IPaneView[] = [];
 		topPaneViews.push(...main.topPaneViews, this._priceLineView);
 		const orderLines = this._customPriceLines.filter((line: CustomPriceLine) => line.isOrderLine());
-		topPaneViews.push(...orderLines.flatMap((line: CustomPriceLine) => [line.paneView(), line.orderPillsPaneView()]));
+		topPaneViews.push(...orderLines.map((line: CustomPriceLine) => line.orderPillsPaneView()));
 
 		return {
 			normalPaneViews,
@@ -626,9 +626,12 @@ export class Series<T extends SeriesType> extends PriceDataSource implements IDe
 	}
 
 	public override labelPaneViews(): readonly IPaneView[] {
+		const orderLabelViews = this._customPriceLines
+			.filter((line: CustomPriceLine) => !line.isOrderLine() || line.options().axisLabelVisible)
+			.map((line: CustomPriceLine) => line.labelPaneView());
 		return [
 			this._panePriceAxisView,
-			...this._customPriceLines.map((line: CustomPriceLine) => line.labelPaneView()),
+			...orderLabelViews,
 		];
 	}
 
@@ -638,6 +641,9 @@ export class Series<T extends SeriesType> extends PriceDataSource implements IDe
 		}
 		const result = [...this._priceAxisViews];
 		for (const customPriceLine of this._customPriceLines) {
+			if (customPriceLine.isOrderLine() && !customPriceLine.options().axisLabelVisible) {
+				continue;
+			}
 			result.push(customPriceLine.priceAxisView());
 		}
 		this._primitives.forEach((wrapper: SeriesPrimitiveWrapper) => {
@@ -683,7 +689,11 @@ export class Series<T extends SeriesType> extends PriceDataSource implements IDe
 		}
 
 		for (const customPriceLine of this._customPriceLines) {
-			customPriceLine.update();
+			if (customPriceLine.isOrderLine()) {
+				customPriceLine.updateScrollPosition();
+			} else {
+				customPriceLine.update();
+			}
 		}
 
 		this._priceLineView.update();
