@@ -23,6 +23,31 @@ export abstract class LinePaneViewBase<
 		super(series, model, true);
 	}
 
+	public override patchLastRawPoint(row: SeriesPlotRow<TSeriesType>): boolean {
+		if (this._dataInvalidated || this._items.length === 0) {
+			return false;
+		}
+
+		const colorer = this._series.barColorer();
+		const isConflated = (row.originalDataCount ?? 1) > 1;
+		let value: BarPrice;
+
+		if (isConflated) {
+			const high = row.value[PlotRowValueIndex.High];
+			const low = row.value[PlotRowValueIndex.Low];
+			const close = row.value[PlotRowValueIndex.Close];
+			const highMove = Math.abs(high - close);
+			const lowMove = Math.abs(low - close);
+			value = (highMove > lowMove) ? high as BarPrice : low as BarPrice;
+		} else {
+			value = row.value[PlotRowValueIndex.Close] as BarPrice;
+		}
+
+		this._items[this._items.length - 1] = this._createRawItem(row.index, value, colorer);
+		this._invalidated = true;
+		return true;
+	}
+
 	protected _convertToCoordinates(priceScale: PriceScale, timeScale: ITimeScale, firstValue: number): void {
 		timeScale.indexesToCoordinates(this._items, undefinedIfNull(this._itemsVisibleRange));
 		priceScale.pointsArrayToCoordinates(this._items, firstValue, undefinedIfNull(this._itemsVisibleRange));

@@ -5,6 +5,7 @@ import { IChartModelBase } from '../chart-model';
 import { InternalHitTestCandidate } from '../internal-hit-test';
 import { ISeries } from '../iseries';
 import { PriceScale } from '../price-scale';
+import { SeriesPlotRow } from '../series-data';
 import { SeriesType } from '../series-options';
 import { SeriesItemsIndexesRange, TimedValue, visibleTimedValues } from '../time-data';
 import { ITimeScale } from '../time-scale';
@@ -35,6 +36,11 @@ export abstract class SeriesPaneViewBase<TSeriesType extends SeriesType, ItemTyp
 		if (updateType === 'options') {
 			this._optionsInvalidated = true;
 		}
+	}
+
+	/** Incremental last-bar patch for live ticks. Override in series pane views. */
+	public patchLastRawPoint(row: SeriesPlotRow<SeriesType>): boolean {
+		return false;
 	}
 
 	public renderer(): IPaneRenderer | null {

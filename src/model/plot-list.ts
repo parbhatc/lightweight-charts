@@ -113,6 +113,18 @@ export class PlotList<PlotRowType extends PlotRow = PlotRow> {
 		this._indices = plotRows.map((plotRow: PlotRowType) => plotRow.index);
 	}
 
+	/** Patch the last row in place (forming bar / live tick). Returns false if not applicable. */
+	public updateLastRow(plotRow: PlotRowType): boolean {
+		const len = this._items.length;
+		if (len === 0 || this._items[len - 1].index !== plotRow.index) {
+			return false;
+		}
+
+		(this._items as PlotRowType[])[len - 1] = plotRow;
+		this._minMaxCache.clear();
+		return true;
+	}
+
 	public prependRows(plotRows: readonly PlotRowType[]): void {
 		if (plotRows.length === 0) {
 			return;

@@ -26,6 +26,7 @@ import { Coordinate } from './coordinate';
 import { CustomPriceLine } from './custom-price-line';
 import { DataConflater } from './data-conflater';
 import { isDefaultPriceScale } from './default-price-scale';
+import { isSeriesPlotRow } from './get-series-plot-row-creator';
 import { CustomConflationReducer, CustomData, CustomSeriesWhitespaceData, ICustomSeriesPaneView, WhitespaceCheck } from './icustom-series';
 import { PrimitiveHoveredItem, PrimitivePaneViewZOrder } from './ipane-primitive';
 import { FirstValue } from './iprice-data-source';
@@ -301,6 +302,50 @@ export class Series<T extends SeriesType> extends PriceDataSource implements IDe
 		this.model().updateSource(this);
 		this.model().updateCrosshair();
 		this.model().lightUpdate();
+	}
+
+	/**
+	 * Fast path for live forming-bar ticks: patch last row only instead of full setData.
+	 * Returns false when a full setData refresh is required.
+	 */
+	public updateLastBar(data: readonly SeriesPlotRow<T>[], updateInfo?: SeriesUpdateInfo): boolean {
+		if (data.length === 0 || this._data.size() !== data.length) {
+			return false;
+		}
+
+		const lastRow = data[data.length - 1];
+		const prevLast = this._data.last();
+		if (prevLast === null || prevLast.index !== lastRow.index) {
+			return false;
+		}
+
+		if (!this._data.updateLastRow(lastRow)) {
+			return false;
+		}
+
+		if (this.isConflationEnabled() && isSeriesPlotRow(lastRow)) {
+			this.updateLastConflatedChunk(lastRow);
+		}
+
+		const paneView = this._paneView as IUpdatablePaneView & {
+			patchLastRawPoint?: (row: SeriesPlotRow<T>) => boolean;
+		};
+		if (typeof paneView.patchLastRawPoint === 'function' && paneView.patchLastRawPoint(lastRow)) {
+			// incremental pane items patch
+		} else {
+			paneView.update('data');
+		}
+
+		if (this._lastPriceAnimationPaneView !== null && updateInfo?.lastBarUpdatedOrNewBarsAddedToTheRight) {
+			this._lastPriceAnimationPaneView.onNewRealtimeDataReceived();
+		}
+
+		const sourcePane = this.model().paneForSource(this);
+		this.model().recalculatePane(sourcePane);
+		this.model().updateSource(this);
+		this.model().updateCrosshair();
+		this.model().lightUpdate();
+		return true;
 	}
 
 	public prependData(data: readonly SeriesPlotRow<T>[], updateInfo?: SeriesUpdateInfo): void {

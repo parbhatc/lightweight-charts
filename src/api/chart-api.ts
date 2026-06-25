@@ -414,18 +414,32 @@ export class ChartApi<HorzScaleItem> implements IChartApiBase<HorzScaleItem>, Da
 
 	private _sendUpdateToChart(update: DataUpdateResponse): void {
 		const model = this._chartWidget.model();
+		const incrementalTimeScale = update.timeScale.firstChangedPointIndex === undefined;
 
 		model.updateTimeScale(update.timeScale.baseIndex, update.timeScale.points, update.timeScale.firstChangedPointIndex);
+
+		let needsFullPaneRecalc = !incrementalTimeScale;
+
 		update.series.forEach((value: SeriesChanges, series: Series<SeriesType>) => {
 			if (value.prependRows !== undefined && value.prependRows.length > 0) {
 				series.prependData(value.prependRows, value.info);
+				needsFullPaneRecalc = true;
+			} else if (
+				incrementalTimeScale &&
+				value.info?.lastBarUpdatedOrNewBarsAddedToTheRight &&
+				series.updateLastBar(value.data, value.info)
+			) {
+				// live tick fast path — series already recalculated its pane
 			} else {
 				series.setData(value.data, value.info);
+				needsFullPaneRecalc = true;
 			}
 		});
 
-		model.timeScale().recalculateIndicesWithData();
-		model.recalculateAllPanes();
+		if (needsFullPaneRecalc) {
+			model.timeScale().recalculateIndicesWithData();
+			model.recalculateAllPanes();
+		}
 	}
 
 	private _mapSeriesToApi(series: Series<SeriesType>): ISeriesApi<SeriesType, HorzScaleItem> {

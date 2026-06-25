@@ -22,6 +22,17 @@ export abstract class BarsPaneViewBase<TSeriesType extends 'Bar' | 'Candlestick'
 		super(series, model, false);
 	}
 
+	public override patchLastRawPoint(row: SeriesPlotRow<TSeriesType>): boolean {
+		if (this._dataInvalidated || this._items.length === 0) {
+			return false;
+		}
+
+		const colorer = this._series.barColorer();
+		this._items[this._items.length - 1] = this._createRawItem(row.index, row, colorer);
+		this._invalidated = true;
+		return true;
+	}
+
 	protected override _hitTestImpl(x: Coordinate, y: Coordinate): InternalHitTestCandidate | null {
 		return hitTestSeriesRange(
 			this._items,
