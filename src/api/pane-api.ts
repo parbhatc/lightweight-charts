@@ -86,7 +86,7 @@ export class PaneApi<HorzScaleItem> implements IPaneApi<HorzScaleItem> {
 		if (primitive.attached) {
 			primitive.attached({
 				chart: this._chartApi,
-				requestUpdate: () => this._pane.model().fullUpdate(),
+				requestUpdate: () => this._pane.model().invalidatePane(this._pane),
 			});
 		}
 	}

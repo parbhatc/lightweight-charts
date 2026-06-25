@@ -113,6 +113,17 @@ export class PlotList<PlotRowType extends PlotRow = PlotRow> {
 		this._indices = plotRows.map((plotRow: PlotRowType) => plotRow.index);
 	}
 
+	public prependRows(plotRows: readonly PlotRowType[]): void {
+		if (plotRows.length === 0) {
+			return;
+		}
+
+		this._rowSearchCache.clear();
+		this._minMaxCache.clear();
+		this._items = plotRows.concat(this._items as PlotRowType[]);
+		this._indices = plotRows.map((plotRow: PlotRowType) => plotRow.index).concat(this._indices as TimePointIndex[]);
+	}
+
 	// TimePointIndex values for fulfilled data points
 	public indices(): readonly TimePointIndex[] {
 		return this._indices;

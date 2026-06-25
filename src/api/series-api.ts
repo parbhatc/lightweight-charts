@@ -9,10 +9,11 @@ import { BarPrice } from '../model/bar';
 import { Coordinate } from '../model/coordinate';
 import { CustomPriceLine } from '../model/custom-price-line';
 import { DataUpdatesConsumer, SeriesDataItemTypeMap, WhitespaceData } from '../model/data-consumer';
-import { checkItemsAreOrdered, checkPriceLineOptions, checkSeriesValuesType } from '../model/data-validators';
+import { checkItemsAreOrdered, checkOrderLineOptions, checkPriceLineOptions, checkSeriesValuesType } from '../model/data-validators';
 import { IHorzScaleBehavior } from '../model/ihorz-scale-behavior';
 import { LastValueDataResult } from '../model/iseries';
 import { ISeriesPrimitiveBase } from '../model/iseries-primitive';
+import { CreateOrderLineOptions, OrderLineOptions } from '../model/order-line-options';
 import { Pane } from '../model/pane';
 import { MismatchDirection } from '../model/plot-list';
 import { CreatePriceLineOptions, PriceLineOptions } from '../model/price-line-options';
@@ -30,12 +31,15 @@ import { TimeScaleVisibleRange } from '../model/time-scale-visible-range';
 import { IPriceScaleApiProvider } from './chart-api';
 import { getSeriesDataCreator } from './get-series-data-creator';
 import { type IChartApiBase } from './ichart-api';
+import { IOrderLine } from './iorder-line';
 import { IPaneApi } from './ipane-api';
 import { IPriceLine } from './iprice-line';
 import { IPriceScaleApi } from './iprice-scale-api';
 import { BarsInfo, DataChangedHandler, DataChangedScope, ISeriesApi } from './iseries-api';
 import { ISeriesPrimitive } from './iseries-primitive-api';
+import { orderLineOptionsDefaults } from './options/order-line-options-defaults';
 import { priceLineOptionsDefaults } from './options/price-line-options-defaults';
+import { OrderLine } from './order-line-api';
 import { PriceLine } from './price-line-api';
 
 export class SeriesApi<
@@ -155,6 +159,18 @@ export class SeriesApi<
 		this._onDataChanged('full');
 	}
 
+	public prepend(data: TData[]): void {
+		if (data.length === 0) {
+			return;
+		}
+
+		checkItemsAreOrdered(data, this._horzScaleBehavior);
+		checkSeriesValuesType(this._series.seriesType(), data);
+
+		this._dataUpdatesConsumer.prependData(this._series, data);
+		this._onDataChanged('update');
+	}
+
 	public update(bar: TData, historicalUpdate: boolean = false): void {
 		checkSeriesValuesType(this._series.seriesType(), [bar]);
 
@@ -223,7 +239,23 @@ export class SeriesApi<
 	}
 
 	public priceLines(): IPriceLine[] {
-		return this._series.priceLines().map((priceLine: CustomPriceLine): IPriceLine => new PriceLine(priceLine));
+		return this._series.priceLines().filter((line: CustomPriceLine) => !line.isOrderLine()).map((priceLine: CustomPriceLine): IPriceLine => new PriceLine(priceLine));
+	}
+
+	public createOrderLine(options: CreateOrderLineOptions): IOrderLine {
+		checkOrderLineOptions(options);
+
+		const strictOptions = merge(clone(orderLineOptionsDefaults), options) as OrderLineOptions;
+		const orderLine = this._series.createOrderLine(strictOptions);
+		return new OrderLine(orderLine);
+	}
+
+	public removeOrderLine(line: IOrderLine): void {
+		this._series.removeOrderLine((line as OrderLine).orderLine());
+	}
+
+	public orderLines(): IOrderLine[] {
+		return this._series.orderLines().map((orderLine: CustomPriceLine): IOrderLine => new OrderLine(orderLine));
 	}
 
 	public seriesType(): TSeriesType {
@@ -254,7 +286,7 @@ export class SeriesApi<
 			primitive.attached({
 				chart: this._chartApi,
 				series: this,
-				requestUpdate: () => this._series.model().fullUpdate(),
+				requestUpdate: () => this._series.model().updateSource(this._series),
 				horzScaleBehavior: this._horzScaleBehavior,
 			});
 		}
@@ -265,7 +297,7 @@ export class SeriesApi<
 		if (primitive.detached) {
 			primitive.detached();
 		}
-		this._series.model().fullUpdate();
+		this._series.model().updateSource(this._series);
 	}
 
 	public getPane(): IPaneApi<HorzScaleItem> {

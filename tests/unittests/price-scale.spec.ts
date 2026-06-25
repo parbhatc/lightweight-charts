@@ -44,6 +44,7 @@ describe('PriceScale', () => {
 			visibleSerieses: () => [],
 			invalidateVisibleSeries: () => {},
 			updateSource: () => {},
+			invalidatePane: () => {},
 			updateCrosshair: () => {},
 			cursorUpdate: () => {},
 			clearCurrentPosition: () => {},

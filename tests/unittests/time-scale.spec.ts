@@ -1,6 +1,10 @@
 /* eslint-disable @typescript-eslint/no-floating-promises */
+import * as chai from 'chai';
 import { expect } from 'chai';
+import chaiExclude from 'chai-exclude';
 import { describe, it } from 'node:test';
+
+chai.use(chaiExclude);
 
 import { timeScaleOptionsDefaults } from '../../src/api/options/time-scale-options-defaults';
 import { ChartModel } from '../../src/model/chart-model';
@@ -17,6 +21,21 @@ function chartModelMock(): ChartModel<Time> {
 	return {
 		recalculateAllPanes: () => {},
 		lightUpdate: () => {},
+		options: () => ({
+			layout: { fontSize: 12 },
+			handleScroll: {
+				horzTouchDrag: true,
+				mouseWheel: true,
+				pressedMouseMove: true,
+				vertTouchDrag: true,
+			},
+			handleScale: {
+				axisDoubleClickReset: { time: true, price: true },
+				axisPressedMouseMove: { time: true, price: true },
+				mouseWheel: true,
+				pinch: true,
+			},
+		}),
 	} as ChartModel<Time>;
 }
 
@@ -102,20 +121,20 @@ describe('TimeScale', () => {
 			expect(ts.timeToIndex({ timestamp: 0.5 as UTCTimestamp } as unknown as InternalHorzScaleItem, false)).to.be.equal(null);
 		});
 
-		it('should return last index if timestamp is greater than last timestamp and findNearest is parameter is true', () => {
+		it('should extrapolate index when timestamp is beyond the last bar and findNearest is true', () => {
 			const ts = new TimeScale<Time>(chartModelMock(), timeScaleOptionsDefaults, fakeLocalizationOptions, behavior);
 
 			ts.update(...tsUpdate(2));
 
-			expect(ts.timeToIndex({ timestamp: 3 as UTCTimestamp } as unknown as InternalHorzScaleItem, true)).to.be.equal(2);
+			expect(ts.timeToIndex({ timestamp: 3 as UTCTimestamp } as unknown as InternalHorzScaleItem, true)).to.be.equal(3);
 		});
 
-		it('should return first index if timestamp is less than first timestamp and findNearest is parameter is true', () => {
+		it('should extrapolate index when timestamp is before the first bar and findNearest is true', () => {
 			const ts = new TimeScale<Time>(chartModelMock(), timeScaleOptionsDefaults, fakeLocalizationOptions, behavior);
 
 			ts.update(...tsUpdate(2));
 
-			expect(ts.timeToIndex({ timestamp: -1 as UTCTimestamp } as unknown as InternalHorzScaleItem, true)).to.be.equal(0);
+			expect(ts.timeToIndex({ timestamp: -1 as UTCTimestamp } as unknown as InternalHorzScaleItem, true)).to.be.equal(-1);
 		});
 
 		it('should return next index if timestamp is between two values on the scale and findNearest parameter is true', () => {
@@ -124,6 +143,94 @@ describe('TimeScale', () => {
 			ts.update(...tsUpdate(1));
 
 			expect(ts.timeToIndex({ timestamp: 0.5 as UTCTimestamp } as unknown as InternalHorzScaleItem, true)).to.be.equal(1);
+		});
+	});
+
+	describe('virtual future time extrapolation', () => {
+		it('should project indexToTime beyond the last loaded point', () => {
+			const ts = new TimeScale<Time>(chartModelMock(), timeScaleOptionsDefaults, fakeLocalizationOptions, behavior);
+			ts.update(...tsUpdate(1));
+
+			const future = ts.indexToTime(3 as TimePointIndex) as unknown as { timestamp: number };
+			expect(future.timestamp).to.be.equal(3);
+		});
+
+		it('should return extrapolated time scale point for virtual future index', () => {
+			const ts = new TimeScale<Time>(chartModelMock(), timeScaleOptionsDefaults, fakeLocalizationOptions, behavior);
+			ts.update(...tsUpdate(60 as number));
+
+			const point = ts.indexToTimeScalePoint(65 as TimePointIndex);
+			expect(point).not.to.be.equal(null);
+			expect(point?.originalTime).to.be.equal(65);
+			const time = ts.indexToTime(65 as TimePointIndex) as unknown as { timestamp: number };
+			expect(time.timestamp).to.be.equal(65);
+		});
+
+		it('should resolve coordinate in future whitespace to a virtual index', () => {
+			const lastIndex = 100 as TimePointIndex;
+			const ts = new TimeScale<Time>(
+				chartModelMock(),
+				{ ...timeScaleOptionsDefaults, barSpacing: 8, rightOffset: 10 },
+				fakeLocalizationOptions,
+				behavior
+			);
+			ts.setWidth(800);
+			ts.update(...tsUpdate(lastIndex));
+			ts.setBaseIndex(lastIndex);
+
+			const futureCoord = ts.indexToCoordinate(105 as TimePointIndex);
+			const resolvedIndex = ts.coordinateToIndex(futureCoord);
+			expect(resolvedIndex).to.be.equal(105);
+			const time = ts.indexToTime(resolvedIndex) as unknown as { timestamp: number };
+			expect(time.timestamp).to.be.equal(105);
+		});
+
+		it('should include virtual future indices in time axis marks', () => {
+			const lastIndex = 100 as TimePointIndex;
+			// eslint-disable-next-line @typescript-eslint/no-unsafe-argument
+			behavior.setOptions({
+				timeScale: { ...timeScaleOptionsDefaults, timeVisible: true, secondsVisible: false },
+				localization: { locale: 'en-US', dateFormat: 'yyyy-MM-dd' },
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any
+			} as any);
+			const ts = new TimeScale<Time>(
+				chartModelMock(),
+				{ ...timeScaleOptionsDefaults, barSpacing: 6, rightOffset: 20, timeVisible: true },
+				fakeLocalizationOptions,
+				behavior
+			);
+			ts.setWidth(600);
+			ts.update(...tsUpdate(lastIndex));
+			ts.setBaseIndex(lastIndex);
+
+			const marks = ts.marks();
+			expect(marks).not.to.be.equal(null);
+			expect((marks ?? []).length).to.be.greaterThan(0);
+			const lastBarCoord = ts.indexToCoordinate(lastIndex);
+			const hasFutureMark = (marks ?? []).some((m: { coord: number }) => m.coord > lastBarCoord);
+			expect(hasFutureMark).to.be.equal(true);
+		});
+	});
+
+	describe('scroll logical range notifications', () => {
+		it('should defer logicalRangeChanged until endScroll', () => {
+			const ts = new TimeScale<Time>(chartModelMock(), { ...timeScaleOptionsDefaults, barSpacing: 6, rightOffset: 0 }, fakeLocalizationOptions, behavior);
+			ts.setWidth(600);
+			ts.update(...tsUpdate(100 as number));
+			ts.setBaseIndex(100 as TimePointIndex);
+
+			let fires = 0;
+			ts.logicalRangeChanged().subscribe(() => {
+				fires += 1;
+			});
+
+			ts.startScroll(300 as Coordinate);
+			ts.scrollTo(200 as Coordinate);
+			ts.visibleLogicalRange();
+			expect(fires).to.be.equal(0);
+
+			ts.endScroll();
+			expect(fires).to.be.equal(1);
 		});
 	});
 });

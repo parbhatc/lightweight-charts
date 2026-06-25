@@ -44,6 +44,10 @@ export interface SeriesChanges {
 	 * Additional info about this change
 	 */
 	info?: SeriesUpdateInfo;
+	/**
+	 * When set, the target series is updated via prependData instead of setData.
+	 */
+	prependRows?: readonly SeriesPlotRow<SeriesType>[];
 }
 
 export interface DataUpdateResponse {
@@ -237,6 +241,114 @@ export class DataLayer<HorzScaleItem> {
 			firstChangedPointIndex,
 			seriesUpdateInfo(this._seriesRowsBySeries.get(series), prevSeriesRows, this._horzScaleBehavior)
 		);
+	}
+
+	// eslint-disable-next-line complexity
+	public prependSeriesData<TSeriesType extends SeriesType>(series: Series<TSeriesType>, data: SeriesDataItemTypeMap<HorzScaleItem>[TSeriesType][]): DataUpdateResponse {
+		if (data.length === 0) {
+			return this._emptyUpdateResponse();
+		}
+
+		if (series.isConflationEnabled()) {
+			throw new Error('Prepending historical data is not supported when conflation is enabled. Conflation requires data to be processed in order.');
+		}
+
+		const existingRows = this._seriesRowsBySeries.get(series);
+		if (existingRows === undefined || existingRows.length === 0) {
+			return this.setSeriesData(series, data);
+		}
+
+		const firstExistingKey = this._horzScaleBehavior.key(existingRows[0].time);
+
+		const originalTimes = data.map((d: SeriesDataItemTypeMap<HorzScaleItem>[TSeriesType]) => d.time);
+		const timeConverter = this._horzScaleBehavior.createConverterToInternalObj(data);
+		const createPlotRow = getSeriesPlotRowCreator<TSeriesType, HorzScaleItem>(series.seriesType());
+		const dataToPlotRow = series.customSeriesPlotValuesBuilder();
+		const customWhitespaceChecker = series.customSeriesWhitespaceCheck<HorzScaleItem>();
+
+		let firstChangedPointIndex = -1;
+		const rowsToPrepend: SeriesPlotRow<TSeriesType>[] = [];
+
+		for (let index = 0; index < data.length; ++index) {
+			const item = data[index];
+			const time = timeConverter(item.time);
+			const horzItemKey = this._horzScaleBehavior.key(time);
+
+			if (horzItemKey > firstExistingKey) {
+				throw new Error('Cannot prepend data: all item times must be less than or equal to the first existing data point time.');
+			}
+
+			if (horzItemKey === firstExistingKey) {
+				const pointDataAtTime = this._pointDataByTimePoint.get(horzItemKey);
+				if (pointDataAtTime !== undefined) {
+					const plotRow = createPlotRow(time, pointDataAtTime.index, item, originalTimes[index], dataToPlotRow, customWhitespaceChecker);
+					pointDataAtTime.mapping.set(series, plotRow);
+					if (isSeriesPlotRow(plotRow)) {
+						existingRows[0] = plotRow as SeriesPlotRow<TSeriesType>;
+					}
+				}
+				continue;
+			}
+
+			let pointDataAtTime = this._pointDataByTimePoint.get(horzItemKey);
+			const affectsTimeScale = pointDataAtTime === undefined;
+
+			if (pointDataAtTime === undefined) {
+				pointDataAtTime = createEmptyTimePointData(time);
+				this._pointDataByTimePoint.set(horzItemKey, pointDataAtTime);
+			}
+
+			const plotRow = createPlotRow(time, pointDataAtTime.index, item, originalTimes[index], dataToPlotRow, customWhitespaceChecker);
+			pointDataAtTime.mapping.set(series, plotRow);
+
+			if (isSeriesPlotRow(plotRow)) {
+				rowsToPrepend.push(plotRow as SeriesPlotRow<TSeriesType>);
+			}
+
+			if (affectsTimeScale) {
+				const newPoint: InternalTimeScalePoint = {
+					timeWeight: 0 as TickMarkWeightValue,
+					time: pointDataAtTime.timePoint,
+					pointData: pointDataAtTime,
+					originalTime: timeScalePointTime(pointDataAtTime.mapping),
+				};
+
+				const insertIndex = lowerBound(this._sortedTimePoints, horzItemKey, (a: InternalTimeScalePoint, b: number) => this._horzScaleBehavior.key(a.time) < b);
+
+				(this._sortedTimePoints as InternalTimeScalePoint[]).splice(insertIndex, 0, newPoint);
+
+				if (firstChangedPointIndex === -1 || insertIndex < firstChangedPointIndex) {
+					firstChangedPointIndex = insertIndex;
+				}
+
+				for (let pointIndex = insertIndex; pointIndex < this._sortedTimePoints.length; ++pointIndex) {
+					assignIndexToPointData(this._sortedTimePoints[pointIndex].pointData, pointIndex as TimePointIndex);
+				}
+			}
+		}
+
+		if (rowsToPrepend.length > 0) {
+			existingRows.unshift(...rowsToPrepend);
+		}
+
+		if (firstChangedPointIndex !== -1) {
+			this._horzScaleBehavior.fillWeightsForPoints(this._sortedTimePoints, firstChangedPointIndex);
+		}
+
+		const info: SeriesUpdateInfo = {
+			historicalUpdate: true,
+			lastBarUpdatedOrNewBarsAddedToTheRight: false,
+		};
+
+		const response = this._getUpdateResponse(series, firstChangedPointIndex, info);
+		if (rowsToPrepend.length > 0) {
+			const seriesChanges = response.series.get(series);
+			if (seriesChanges !== undefined) {
+				response.series.set(series, { ...seriesChanges, prependRows: rowsToPrepend });
+			}
+		}
+
+		return response;
 	}
 
 	public removeSeries(series: Series<SeriesType>): DataUpdateResponse {

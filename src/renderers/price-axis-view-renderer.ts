@@ -11,6 +11,22 @@ import {
 	PriceAxisViewRendererOptions,
 } from './iprice-axis-view-renderer';
 
+const STACKED_LABEL_LINE_GAP = 0;
+const STACKED_SUBTITLE_FONT_SIZE = 11;
+const STACKED_LABEL_BOTTOM_PAD = 2;
+
+function stackedAxisLabelExtraHeight(rendererOptions: PriceAxisViewRendererOptions): number {
+	return STACKED_LABEL_LINE_GAP + STACKED_SUBTITLE_FONT_SIZE + STACKED_LABEL_BOTTOM_PAD;
+}
+
+function standardAxisLabelHeight(rendererOptions: PriceAxisViewRendererOptions): number {
+	return rendererOptions.fontSize + rendererOptions.paddingTop + rendererOptions.paddingBottom;
+}
+
+function subtitleFont(rendererOptions: PriceAxisViewRendererOptions): string {
+	return `${STACKED_SUBTITLE_FONT_SIZE}px ${rendererOptions.fontFamily}`;
+}
+
 interface Geometry {
 	alignRight: boolean;
 
@@ -57,6 +73,11 @@ export class PriceAxisViewRenderer implements IPriceAxisViewRenderer {
 			return 0;
 		}
 
+		const subtitle = this._data.subtitleText ?? '';
+		if (subtitle.length > 0 || useSecondLine) {
+			return standardAxisLabelHeight(rendererOptions) + stackedAxisLabelExtraHeight(rendererOptions);
+		}
+
 		return rendererOptions.fontSize + rendererOptions.paddingTop + rendererOptions.paddingBottom;
 	}
 
@@ -67,6 +88,12 @@ export class PriceAxisViewRenderer implements IPriceAxisViewRenderer {
 		align: 'left' | 'right'
 	): void {
 		if (!this._data.visible || this._data.text.length === 0) {
+			return;
+		}
+
+		const subtitle = this._data.subtitleText ?? '';
+		if (subtitle.length > 0) {
+			this._drawStackedLabel(target, rendererOptions, textWidthCache, align, subtitle);
 			return;
 		}
 
@@ -138,24 +165,123 @@ export class PriceAxisViewRenderer implements IPriceAxisViewRenderer {
 		});
 	}
 
+	private _drawStackedLabel(
+		target: CanvasRenderingTarget2D,
+		rendererOptions: PriceAxisViewRendererOptions,
+		textWidthCache: TextWidthCache,
+		align: 'left' | 'right',
+		subtitle: string
+	): void {
+		const textColor = this._data.color;
+		const backgroundColor = this._commonData.background;
+		const lineY = this._commonData.coordinate;
+		const singleH = standardAxisLabelHeight(rendererOptions);
+		const topY = lineY - singleH / 2;
+		const subtitleTop = topY + singleH + STACKED_LABEL_LINE_GAP;
+		const totalH = singleH + stackedAxisLabelExtraHeight(rendererOptions);
+		const alignRight = align === 'right';
+
+		const layout = target.useBitmapCoordinateSpace((scope: BitmapCoordinatesRenderingScope) => {
+			const { context: ctx, horizontalPixelRatio, verticalPixelRatio } = scope;
+			ctx.font = rendererOptions.font;
+			const priceWidth = Math.ceil(textWidthCache.measureText(ctx, this._data.text));
+			ctx.font = subtitleFont(rendererOptions);
+			const subtitleWidth = Math.ceil(textWidthCache.measureText(ctx, subtitle));
+			ctx.font = rendererOptions.font;
+
+			const geom = this._calculateGeometry(scope, rendererOptions, textWidthCache, align, {
+				text: this._data.text,
+				textWidth: Math.max(priceWidth, subtitleWidth),
+				coordinate: lineY,
+			});
+			const gb = geom.bitmap;
+			const blockTopBitmap = Math.round(topY * verticalPixelRatio);
+			const blockHeightBitmap = Math.round(totalH * verticalPixelRatio);
+			const blockXBitmap = alignRight ? gb.xOutside : gb.xInside;
+			const cornerRadii: [number, number, number, number] = alignRight
+				? [gb.radius, 0, 0, gb.radius]
+				: [0, gb.radius, gb.radius, 0];
+
+			drawRoundRectWithBorder(
+				ctx,
+				blockXBitmap,
+				blockTopBitmap,
+				gb.totalWidth,
+				blockHeightBitmap,
+				backgroundColor,
+				gb.horzBorder,
+				cornerRadii,
+				backgroundColor
+			);
+
+			if (this._data.tickVisible) {
+				ctx.fillStyle = textColor;
+				ctx.fillRect(gb.xInside, gb.yMid, gb.xTick - gb.xInside, gb.tickHeight);
+			}
+
+			if (this._data.borderVisible) {
+				ctx.fillStyle = rendererOptions.paneBackgroundColor;
+				ctx.fillRect(
+					alignRight ? gb.right - gb.horzBorder : 0,
+					blockTopBitmap,
+					gb.horzBorder,
+					blockHeightBitmap
+				);
+			}
+
+			const blockLeft = blockXBitmap / horizontalPixelRatio;
+			const blockRight = blockLeft + gb.totalWidth / horizontalPixelRatio;
+
+			return {
+				priceX: geom.media.xText,
+				priceY: (geom.media.yTop + geom.media.yBottom) / 2 + geom.media.textMidCorrection,
+				subtitleCenterX: (blockLeft + blockRight) / 2,
+				subtitleTop,
+			};
+		});
+
+		target.useMediaCoordinateSpace(({ context: ctx }: MediaCoordinatesRenderingScope) => {
+			ctx.fillStyle = textColor;
+			ctx.font = rendererOptions.font;
+			ctx.textAlign = alignRight ? 'right' : 'left';
+			ctx.textBaseline = 'middle';
+			ctx.fillText(this._data.text, layout.priceX, layout.priceY);
+
+			ctx.textAlign = 'center';
+			ctx.textBaseline = 'top';
+			ctx.font = subtitleFont(rendererOptions);
+			ctx.fillText(subtitle, layout.subtitleCenterX, layout.subtitleTop);
+		});
+	}
+
+	// eslint-disable-next-line complexity
 	private _calculateGeometry(
 		scope: BitmapCoordinatesRenderingScope,
 		rendererOptions: PriceAxisViewRendererOptions,
 		textWidthCache: TextWidthCache,
-		align: 'left' | 'right'
+		align: 'left' | 'right',
+		overrides?: {
+			text?: string;
+			textWidth?: number;
+			coordinate?: number;
+			tickVisible?: boolean;
+			moveTextToInvisibleTick?: boolean;
+			separatorVisible?: boolean;
+		}
 	): Geometry {
 		const { context: ctx, bitmapSize, mediaSize, horizontalPixelRatio, verticalPixelRatio } = scope;
-		const tickSize = (this._data.tickVisible || !this._data.moveTextToInvisibleTick) ? rendererOptions.tickLength : 0;
-		const horzBorder = this._data.separatorVisible ? rendererOptions.borderSize : 0;
+		const tickVisible = overrides?.tickVisible ?? (this._data.tickVisible || !this._data.moveTextToInvisibleTick);
+		const tickSize = tickVisible ? rendererOptions.tickLength : 0;
+		const horzBorder = (overrides?.separatorVisible ?? this._data.separatorVisible) ? rendererOptions.borderSize : 0;
 		const paddingTop = rendererOptions.paddingTop + this._commonData.additionalPaddingTop;
 		const paddingBottom = rendererOptions.paddingBottom + this._commonData.additionalPaddingBottom;
 		const paddingInner = rendererOptions.paddingInner;
 		const paddingOuter = rendererOptions.paddingOuter;
-		const text = this._data.text;
+		const text = overrides?.text ?? this._data.text;
 		const actualTextHeight = rendererOptions.fontSize;
 		const textMidCorrection = textWidthCache.yMidCorrection(ctx, text);
 
-		const textWidth = Math.ceil(textWidthCache.measureText(ctx, text));
+		const textWidth = overrides?.textWidth ?? Math.ceil(textWidthCache.measureText(ctx, text));
 
 		const totalHeight = actualTextHeight + paddingTop + paddingBottom;
 
@@ -171,7 +297,7 @@ export class PriceAxisViewRenderer implements IPriceAxisViewRenderer {
 		// tick overlaps scale border
 		const tickSizeBitmap = Math.round(tickSize * horizontalPixelRatio);
 
-		const yMid = this._commonData.fixedCoordinate ?? this._commonData.renderCoordinate ?? this._commonData.coordinate;
+		const yMid = overrides?.coordinate ?? this._commonData.fixedCoordinate ?? this._commonData.renderCoordinate ?? this._commonData.coordinate;
 		const yMidBitmap = Math.round(yMid * verticalPixelRatio) - Math.floor(verticalPixelRatio * 0.5);
 		const yTopBitmap = Math.floor(yMidBitmap + tickHeightBitmap / 2 - totalHeightBitmap / 2);
 		const yBottomBitmap = yTopBitmap + totalHeightBitmap;

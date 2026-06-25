@@ -30,6 +30,7 @@ import { Series } from './series';
 import { SeriesType } from './series-options';
 import { LogicalRange, TimePointIndex, TimeScalePoint } from './time-data';
 import { HorzScaleOptions, ITimeScale, TimeScale } from './time-scale';
+import { ITimezoneProvider } from './timezone';
 import { TouchMouseEventData } from './touch-mouse-event-data';
 
 /**
@@ -364,6 +365,15 @@ export interface ChartOptionsBase {
 	localization: LocalizationOptionsBase;
 
 	/**
+	 * Optional high-performance timezone provider for time-axis and crosshair labels.
+	 * When set, UTC timestamps are shifted by {@link ITimezoneProvider.getOffset} before
+	 * calendar parts are derived for display. Does not mutate series data.
+	 *
+	 * @defaultValue `undefined`
+	 */
+	timezoneProvider?: ITimezoneProvider;
+
+	/**
 	 * Whether to add a default pane to the chart
 	 * Disable this option when you want to create a chart with no panes and add them manually
 	 * @defaultValue `true`
@@ -439,6 +449,7 @@ export interface IChartModelBase {
 	invalidateVisibleSeries(): void;
 
 	updateSource(source: IPriceDataSource): void;
+	invalidatePane(pane: Pane): void;
 	updateCrosshair(): void;
 	cursorUpdate(): void;
 	clearCurrentPosition(): void;
@@ -561,6 +572,10 @@ export class ChartModel<HorzScaleItem> implements IDestroyable, IChartModelBase 
 	public updateSource(source: IPriceDataSource | IPrimitiveHitTestSource): void {
 		const inv = this._invalidationMaskForSource(source);
 		this._invalidate(inv);
+	}
+
+	public invalidatePane(pane: Pane): void {
+		this._invalidate(this._paneInvalidationMask(pane, InvalidationLevel.Light));
 	}
 
 	public hoveredSource(): HoveredSource | null {
@@ -888,7 +903,7 @@ export class ChartModel<HorzScaleItem> implements IDestroyable, IChartModelBase 
 	public setAndSaveCurrentPosition(x: Coordinate, y: Coordinate, event: TouchMouseEventData | null, pane: Pane, skipEvent?: boolean): void {
 		this._crosshair.saveOriginCoord(x, y);
 		let price = NaN;
-		let index = this._timeScale.coordinateToIndex(x, true);
+		let index = this._timeScale.coordinateToIndex(x);
 
 		const visibleBars = this._timeScale.visibleStrictRange();
 		if (visibleBars !== null) {

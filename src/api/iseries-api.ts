@@ -5,6 +5,7 @@ import { Coordinate } from '../model/coordinate';
 import { SeriesDataItemTypeMap } from '../model/data-consumer';
 import { Time } from '../model/horz-scale-behavior-time/types';
 import { LastValueDataResult } from '../model/iseries';
+import { CreateOrderLineOptions } from '../model/order-line-options';
 import { MismatchDirection } from '../model/plot-list';
 import { CreatePriceLineOptions } from '../model/price-line-options';
 import {
@@ -14,6 +15,7 @@ import {
 } from '../model/series-options';
 import { IRange } from '../model/time-data';
 
+import { IOrderLine } from './iorder-line';
 import { IPaneApi } from './ipane-api';
 import { IPriceLine } from './iprice-line';
 import { IPriceScaleApi } from './iprice-scale-api';
@@ -163,6 +165,16 @@ export interface ISeriesApi<
 	setData(data: TData[]): void;
 
 	/**
+	 * Prepends older historical data to the existing series without replacing it.
+	 * All item times must be less than or equal to the first existing data point time.
+	 * Prefer this over `setData` when loading history while scrolling left — it updates
+	 * the time scale incrementally and preserves the current viewport.
+	 *
+	 * @param data - Ordered array of older data items (earlier time goes first).
+	 */
+	prepend(data: TData[]): void;
+
+	/**
 	 * Adds new data item to the existing set (or updates the latest item if times of the passed/latest items are equal).
 	 *
 	 * @param bar - A single data item to be added. Time of the new item must be greater or equal to the latest existing time point.
@@ -288,6 +300,21 @@ export interface ISeriesApi<
 	 * Returns an array of price lines.
 	 */
 	priceLines(): IPriceLine[];
+
+	/**
+	 * Creates a new order line (price line + draggable pane pill).
+	 */
+	createOrderLine(options: CreateOrderLineOptions): IOrderLine;
+
+	/**
+	 * Removes an order line created via {@link createOrderLine}.
+	 */
+	removeOrderLine(line: IOrderLine): void;
+
+	/**
+	 * Returns all order lines on this series.
+	 */
+	orderLines(): IOrderLine[];
 
 	/**
 	 * Return current series type.

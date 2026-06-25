@@ -24,6 +24,8 @@ export interface PriceAxisViewRendererData {
 	lineWidth?: LineWidth;
 	borderVisible: boolean;
 	separatorVisible: boolean;
+	/** Secondary line below the main label (e.g. countdown). */
+	subtitleText?: string;
 }
 
 export interface PriceAxisViewRendererOptions {

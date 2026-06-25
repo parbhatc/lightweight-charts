@@ -238,6 +238,7 @@ export interface SeriesDataItemTypeMap<HorzScaleItem = Time> {
 
 export interface DataUpdatesConsumer<TSeriesType extends SeriesType, HorzScaleItem = Time> {
 	applyNewData(series: Series<TSeriesType>, data: SeriesDataItemTypeMap<HorzScaleItem>[TSeriesType][]): void;
+	prependData(series: Series<TSeriesType>, data: SeriesDataItemTypeMap<HorzScaleItem>[TSeriesType][]): void;
 	updateData(series: Series<TSeriesType>, data: SeriesDataItemTypeMap<HorzScaleItem>[TSeriesType], historicalUpdate: boolean): void;
 	popData(series: Series<TSeriesType>, count: number): SeriesPlotRow<TSeriesType>[];
 }

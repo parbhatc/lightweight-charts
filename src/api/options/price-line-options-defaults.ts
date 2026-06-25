@@ -11,4 +11,6 @@ export const priceLineOptionsDefaults: PriceLineOptions = {
 	title: '',
 	axisLabelColor: '',
 	axisLabelTextColor: '',
+	axisLabelText: '',
+	axisSubtitleText: '',
 };

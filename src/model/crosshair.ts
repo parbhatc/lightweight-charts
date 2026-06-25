@@ -138,7 +138,6 @@ export interface CrosshairOptions {
 
 type RawPriceProvider = () => BarPrice;
 type RawCoordinateProvider = () => Coordinate;
-type RawIndexProvider = () => TimePointIndex;
 
 export class Crosshair extends DataSource {
 	private _pane: Pane | null = null;
@@ -181,15 +180,20 @@ export class Crosshair extends DataSource {
 			};
 		};
 
-		const valueTimeProvider = (rawIndexProvider: RawIndexProvider, rawCoordinateProvider: RawCoordinateProvider) => {
+		const valueTimeProvider = (rawCoordinateProvider: RawCoordinateProvider) => {
 			return () => {
-				const time = this._model.timeScale().indexToTime(rawIndexProvider());
 				const coordinate = rawCoordinateProvider();
-				if (!time || !Number.isFinite(coordinate)) {
+				if (!Number.isFinite(coordinate)) {
+					return null;
+				}
+				const timeScale = this._model.timeScale();
+				const index = timeScale.coordinateToIndex(coordinate);
+				const point = timeScale.indexToTimeScalePoint(index);
+				if (point === null) {
 					return null;
 				}
 				return {
-					time,
+					time: point.time,
 					coordinate,
 				};
 			};
@@ -202,8 +206,7 @@ export class Crosshair extends DataSource {
 		);
 
 		const currentPosTimeProvider = valueTimeProvider(
-			() => this._index,
-			() => this.appliedX()
+			() => this.originCoordX()
 		);
 
 		this._timeAxisView = new CrosshairTimeAxisView(this, model, currentPosTimeProvider);
@@ -390,7 +393,10 @@ export class Crosshair extends DataSource {
 		const priceScale = this._priceScaleByPane(newPane);
 
 		this._index = newIndex;
-		this._x = isNaN(newIndex) ? NaN as Coordinate : this._model.timeScale().indexToCoordinate(newIndex);
+		const originX = this.originCoordX();
+		this._x = Number.isFinite(originX)
+			? originX
+			: (isNaN(newIndex) ? NaN as Coordinate : this._model.timeScale().indexToCoordinate(newIndex));
 		this._pane = newPane;
 
 		const firstValue = priceScale !== null ? priceScale.firstValue() : null;

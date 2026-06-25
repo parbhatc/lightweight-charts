@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/member-ordering */
 import { DateFormatter } from '../../formatters/date-formatter';
 import { DateTimeFormatter } from '../../formatters/date-time-formatter';
 
@@ -12,11 +13,12 @@ import { SeriesType } from '../series-options';
 import { TickMark } from '../tick-marks';
 import { TickMarkWeightValue, TimeScalePoint } from '../time-data';
 import { markWithGreaterWeight, TimeMark } from '../time-scale';
+import { shiftUtcTimestampForDisplay } from '../timezone';
 import { defaultTickMarkFormatter } from './default-tick-mark-formatter';
 import { TimeChartOptions } from './time-based-chart-options';
 import { fillWeightsForPoints } from './time-scale-point-weight-generator';
 import { convertStringsToBusinessDays, convertStringToBusinessDay, convertTime, selectTimeConverter } from './time-utils';
-import { TickMarkType, TickMarkWeight, Time, TimePoint } from './types';
+import { TickMarkType, TickMarkWeight, Time, TimePoint, UTCTimestamp } from './types';
 
 /**
  * Represents options for formatting dates, times, and prices according to a locale.
@@ -142,7 +144,8 @@ export class HorzScaleBehaviorTime implements IHorzScaleBehavior<Time> {
 
 	public formatHorzItem(item: InternalHorzScaleItem): string {
 		const tp = item as unknown as TimePoint;
-		return this._dateTimeFormatter.format(new Date(tp.timestamp * 1000));
+		const timestamp = this._displayTimestamp(tp);
+		return this._dateTimeFormatter.format(new Date(timestamp * 1000));
 	}
 
 	public formatTickmark(tickMark: TickMark, localizationOptions: LocalizationOptions<Time>): string {
@@ -161,7 +164,30 @@ export class HorzScaleBehaviorTime implements IHorzScaleBehavior<Time> {
 			}
 		}
 
-		return defaultTickMarkFormatter(tickMark.time as unknown as TimePoint, tickMarkType, localizationOptions.locale);
+		const timePoint = tickMark.time as unknown as TimePoint;
+		return defaultTickMarkFormatter(
+			this._displayTimePoint(timePoint),
+			tickMarkType,
+			localizationOptions.locale
+		);
+	}
+
+	private _displayTimestamp(timePoint: TimePoint): UTCTimestamp {
+		if (timePoint.businessDay !== undefined) {
+			return timePoint.timestamp;
+		}
+		return shiftUtcTimestampForDisplay(timePoint.timestamp, this._options.timezoneProvider) as UTCTimestamp;
+	}
+
+	private _displayTimePoint(timePoint: TimePoint): TimePoint {
+		if (timePoint.businessDay !== undefined) {
+			return timePoint;
+		}
+		const timestamp = shiftUtcTimestampForDisplay(timePoint.timestamp, this._options.timezoneProvider) as UTCTimestamp;
+		if (timestamp === timePoint.timestamp) {
+			return timePoint;
+		}
+		return { ...timePoint, timestamp };
 	}
 
 	public maxTickMarkWeight(tickMarks: TimeMark[]): TickMarkWeightValue {

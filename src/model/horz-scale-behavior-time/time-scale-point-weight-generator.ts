@@ -32,7 +32,7 @@ const intradayWeightDivisors: WeightDivisor[] = [
 	{ divisor: hours(12), weight: TickMarkWeight.Hour12 },
 ];
 
-function weightByTime(currentDate: Date, prevDate: Date): TickMarkWeight {
+export function weightByTime(currentDate: Date, prevDate: Date): TickMarkWeight {
 	if (currentDate.getUTCFullYear() !== prevDate.getUTCFullYear()) {
 		return TickMarkWeight.Year;
 	} else if (currentDate.getUTCMonth() !== prevDate.getUTCMonth()) {

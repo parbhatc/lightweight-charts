@@ -114,6 +114,41 @@ describe('DataLayer', () => {
 		});
 	});
 
+	it('should be able to prepend older data without rebuilding the full time scale from scratch', () => {
+		const dataLayer = new DataLayer<Time>(behavior);
+		const series1 = createSeriesMock();
+
+		dataLayer.setSeriesData(series1, [dataItemAt(3000 as UTCTimestamp), dataItemAt(5000 as UTCTimestamp)]);
+		const updateResult = dataLayer.prependSeriesData(series1, [dataItemAt(1000 as UTCTimestamp), dataItemAt(2000 as UTCTimestamp)]);
+
+		expect(updateResult.timeScale.baseIndex).to.be.equal(3 as TimePointIndex);
+		expect(updateResult.timeScale.firstChangedPointIndex).to.be.equal(0);
+		expect(updateResult.timeScale.points).excludingEvery('pointData').to.have.deep.members([
+			{ time: { timestamp: 1000 }, timeWeight: 70, originalTime: 1000 },
+			{ time: { timestamp: 2000 }, timeWeight: 22, originalTime: 2000 },
+			{ time: { timestamp: 3000 }, timeWeight: 21, originalTime: 3000 },
+			{ time: { timestamp: 5000 }, timeWeight: 30, originalTime: 5000 },
+		]);
+
+		const seriesUpdates = updateResult.series.get(series1);
+		expect(seriesUpdates).not.to.be.equal(undefined);
+		expect(seriesUpdates?.prependRows?.length).to.be.equal(2);
+		expect(seriesUpdates?.data.length).to.be.equal(4);
+		expect(seriesUpdates?.data[0].index).to.be.equal(0 as TimePointIndex);
+		expect((seriesUpdates?.data[0].time as unknown as TimePoint).timestamp).to.be.equal(1000 as UTCTimestamp);
+		expect(seriesUpdates?.data[3].index).to.be.equal(3 as TimePointIndex);
+		expect((seriesUpdates?.data[3].time as unknown as TimePoint).timestamp).to.be.equal(5000 as UTCTimestamp);
+	});
+
+	it('should reject prepend data newer than the first existing point', () => {
+		const dataLayer = new DataLayer<Time>(behavior);
+		const series1 = createSeriesMock();
+
+		dataLayer.setSeriesData(series1, [dataItemAt(3000 as UTCTimestamp), dataItemAt(5000 as UTCTimestamp)]);
+		expect(() => dataLayer.prependSeriesData(series1, [dataItemAt(4000 as UTCTimestamp)]))
+			.to.throw('Cannot prepend data');
+	});
+
 	it('should be able to append new series WITHOUT updating time scale', () => {
 		const dataLayer = new DataLayer<Time>(behavior);
 

@@ -35,6 +35,7 @@ export function defaultTickMarkFormatter(timePoint: TimePoint, tickMarkType: Tic
 			ensureNever(tickMarkType);
 	}
 
+	// timePoint.timestamp is already display-shifted when a timezoneProvider is configured.
 	const date = timePoint.businessDay === undefined
 		? new Date(timePoint.timestamp * 1000)
 		: new Date(Date.UTC(timePoint.businessDay.year, timePoint.businessDay.month - 1, timePoint.businessDay.day));

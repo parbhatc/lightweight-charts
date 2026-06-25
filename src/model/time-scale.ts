@@ -8,6 +8,8 @@ import { DeepPartial, isInteger, merge } from '../helpers/strict-type-checks';
 import { ChartModel } from './chart-model';
 import { Coordinate } from './coordinate';
 import { FormattedLabelsCache } from './formatted-labels-cache';
+import { weightByTime } from './horz-scale-behavior-time/time-scale-point-weight-generator';
+import { TimePoint, UTCTimestamp } from './horz-scale-behavior-time/types';
 import { IHorzScaleBehavior, InternalHorzScaleItem, InternalHorzScaleItemKey } from './ihorz-scale-behavior';
 import { LocalizationOptions } from './localization-options';
 import { areRangesEqual, RangeImpl } from './range-impl';
@@ -327,6 +329,8 @@ export class TimeScale<HorzScaleItem> implements ITimeScale {
 	private _points: readonly TimeScalePoint[] = [];
 	private _barSpacing: number;
 	private _scrollStartPoint: Coordinate | null = null;
+	private _suppressLogicalRangeChanged: boolean = false;
+	private _logicalRangeChangedWhileSuppressed: boolean = false;
 	private _scaleStartPoint: Coordinate | null = null;
 	private readonly _tickMarks: TickMarks<HorzScaleItem> = new TickMarks();
 	private _formattedByWeight: Map<number, FormattedLabelsCache<HorzScaleItem>> = new Map();
@@ -420,11 +424,17 @@ export class TimeScale<HorzScaleItem> implements ITimeScale {
 	}
 
 	public indexToTime(index: TimePointIndex): InternalHorzScaleItem | null {
-		return this._points[index]?.time ?? null;
+		const point = this.indexToTimeScalePoint(index);
+		return point?.time ?? null;
 	}
 
 	public indexToTimeScalePoint(index: TimePointIndex): TimeScalePoint | null {
-		return this._points[index] ?? null;
+		const point = this._points[index as number];
+		if (point !== undefined) {
+			return point;
+		}
+
+		return this._extrapolatedTimeScalePoint(index);
 	}
 
 	public timeToIndex(time: InternalHorzScaleItem, findNearest: boolean): TimePointIndex | null {
@@ -433,12 +443,35 @@ export class TimeScale<HorzScaleItem> implements ITimeScale {
 			return null;
 		}
 
-		if (this._horzScaleBehavior.key(time) > this._horzScaleBehavior.key(this._points[this._points.length - 1].time)) {
-			// special case
-			return findNearest ? this._points.length - 1 as TimePointIndex : null;
+		const timeKey = this._horzScaleBehavior.key(time);
+		const lastIdx = (this._points.length - 1) as TimePointIndex;
+		const lastKey = this._horzScaleBehavior.key(this._points[lastIdx].time);
+		const firstKey = this._horzScaleBehavior.key(this._points[0].time);
+		const interval = this._barInterval();
+
+		if (timeKey > lastKey) {
+			if (!findNearest) {
+				return null;
+			}
+			if (interval === null) {
+				return lastIdx;
+			}
+			const shift = Math.round((timeKey - lastKey) / interval);
+			return (lastIdx + Math.max(1, shift)) as TimePointIndex;
 		}
 
-		const index = lowerBound(this._points, this._horzScaleBehavior.key(time), (a: TimeScalePoint, b: InternalHorzScaleItemKey) => this._horzScaleBehavior.key(a.time) < b);
+		if (timeKey < firstKey) {
+			if (!findNearest) {
+				return null;
+			}
+			if (interval === null) {
+				return 0 as TimePointIndex;
+			}
+			const shift = Math.round((firstKey - timeKey) / interval);
+			return (0 - Math.max(1, shift)) as TimePointIndex;
+		}
+
+		const index = lowerBound(this._points, timeKey, (a: TimeScalePoint, b: InternalHorzScaleItemKey) => this._horzScaleBehavior.key(a.time) < b);
 
 		if (this._horzScaleBehavior.key(time) < this._horzScaleBehavior.key(this._points[index].time)) {
 			return findNearest ? index as TimePointIndex : null;
@@ -485,11 +518,10 @@ export class TimeScale<HorzScaleItem> implements ITimeScale {
 		const to = Math.round(range.to);
 
 		const firstIndex = ensureNotNull(this._firstIndex());
-		const lastIndex = ensureNotNull(this._lastIndex());
 
 		return {
 			from: ensureNotNull(this.indexToTimeScalePoint(Math.max(firstIndex, from) as TimePointIndex)),
-			to: ensureNotNull(this.indexToTimeScalePoint(Math.min(lastIndex, to) as TimePointIndex)),
+			to: ensureNotNull(this.indexToTimeScalePoint(to as TimePointIndex)),
 		};
 	}
 
@@ -634,11 +666,15 @@ export class TimeScale<HorzScaleItem> implements ITimeScale {
 		const pixelsPerCharacter = pixelsPer8Characters / defaultTickMarkMaxCharacterLength;
 		const maxLabelWidth = pixelsPerCharacter * (this._options.tickMarkMaxCharacterLength || defaultTickMarkMaxCharacterLength);
 		const indexPerLabel = Math.round(maxLabelWidth / spacing);
+		const maxIndexesPerMark = Math.ceil(maxLabelWidth / spacing);
 
 		const visibleBars = ensureNotNull(this.visibleStrictRange());
 
 		const firstBar = Math.max(visibleBars.left(), visibleBars.left() - indexPerLabel);
 		const lastBar = Math.max(visibleBars.right(), visibleBars.right() - indexPerLabel);
+
+		const isAllScalingAndScrollingDisabled = this._isAllScalingAndScrollingDisabled();
+		const showAllMarks = spacing > (maxLabelWidth / 2) && !isAllScalingAndScrollingDisabled;
 
 		const items = this._tickMarks.build(
 			spacing,
@@ -647,6 +683,14 @@ export class TimeScale<HorzScaleItem> implements ITimeScale {
 			this._indicesWithData,
 			this._indicesWithDataUpdateId
 		);
+		const virtualItems = this._buildVirtualTickMarks(
+			firstBar as TimePointIndex,
+			lastBar as TimePointIndex,
+			maxIndexesPerMark,
+			showAllMarks,
+			items
+		);
+		const allItems = items.concat(virtualItems).sort((a: TickMark, b: TickMark) => (a.index as number) - (b.index as number));
 
 		// according to indexPerLabel value this value means "earliest index which _might be_ used as the second label on time scale"
 		const earliestIndexOfSecondLabel = (this._firstIndex() as number) + indexPerLabel;
@@ -654,12 +698,11 @@ export class TimeScale<HorzScaleItem> implements ITimeScale {
 		// according to indexPerLabel value this value means "earliest index which _might be_ used as the second last label on time scale"
 		const indexOfSecondLastLabel = (this._lastIndex() as number) - indexPerLabel;
 
-		const isAllScalingAndScrollingDisabled = this._isAllScalingAndScrollingDisabled();
 		const isLeftEdgeFixed = this._options.fixLeftEdge || isAllScalingAndScrollingDisabled;
 		const isRightEdgeFixed = this._options.fixRightEdge || isAllScalingAndScrollingDisabled;
 
 		let targetIndex = 0;
-		for (const tm of items) {
+		for (const tm of allItems) {
 			if (!(firstBar <= tm.index && tm.index <= lastBar)) {
 				continue;
 			}
@@ -797,6 +840,7 @@ export class TimeScale<HorzScaleItem> implements ITimeScale {
 
 		this._scrollStartPoint = x;
 		this._saveCommonTransitionsStartState();
+		this._suppressLogicalRangeChanged = true;
 	}
 
 	public scrollTo(x: Coordinate): void {
@@ -819,6 +863,12 @@ export class TimeScale<HorzScaleItem> implements ITimeScale {
 
 		this._scrollStartPoint = null;
 		this._clearCommonTransitionsStartState();
+		this._suppressLogicalRangeChanged = false;
+		if (this._visibleRangeInvalidated) {
+			this._updateVisibleRange();
+		} else {
+			this._flushSuppressedLogicalRangeChanged();
+		}
 	}
 
 	public scrollToRealTime(): void {
@@ -993,6 +1043,73 @@ export class TimeScale<HorzScaleItem> implements ITimeScale {
 		return this._points.length === 0 ? null : (this._points.length - 1) as TimePointIndex;
 	}
 
+	/** Seconds (or business-day key units) between the last two time-scale points. */
+	private _barInterval(): number | null {
+		if (this._points.length < 2) {
+			return null;
+		}
+
+		const prev = this._points[this._points.length - 2];
+		const last = this._points[this._points.length - 1];
+		const delta = this._horzScaleBehavior.key(last.time) - this._horzScaleBehavior.key(prev.time);
+		return delta > 0 ? delta : null;
+	}
+
+	/**
+	 * Project a virtual time-scale point beyond the loaded data range.
+	 * Used for crosshair / axis labels in empty future (or past) whitespace.
+	 */
+	private _extrapolatedTimeScalePoint(index: TimePointIndex): TimeScalePoint | null {
+		if (this._points.length === 0) {
+			return null;
+		}
+
+		const lastIdx = this._points.length - 1;
+		const anchorIdx = index > lastIdx ? lastIdx : 0;
+		const anchor = this._points[anchorIdx];
+		const interval = this._barInterval();
+		if (interval === null) {
+			return null;
+		}
+
+		const shift = index - anchorIdx;
+		const intervalKey = interval;
+		const anchorKey = this._horzScaleBehavior.key(anchor.time);
+		const virtualKey = anchorKey + shift * intervalKey;
+
+		const anchorOriginal = anchor.originalTime;
+		let originalTime: HorzScaleItem;
+		if (typeof anchorOriginal === 'number') {
+			originalTime = (anchorOriginal + shift * intervalKey) as HorzScaleItem;
+		} else if (
+			typeof anchorOriginal === 'object' &&
+			anchorOriginal !== null &&
+			typeof (anchorOriginal as { timestamp?: number }).timestamp === 'number'
+		) {
+			const anchorTs = anchorOriginal as { timestamp: number };
+			const shiftedTimestamp = (anchorTs.timestamp + shift * intervalKey) as UTCTimestamp;
+			// eslint-disable-next-line @typescript-eslint/consistent-type-assertions
+			originalTime = { timestamp: shiftedTimestamp } as HorzScaleItem;
+		} else {
+			originalTime = virtualKey as unknown as HorzScaleItem;
+		}
+
+		const anchorTp = anchor.time as unknown as { timestamp?: number; businessDay?: unknown };
+		if (anchorTp.timestamp !== undefined && anchorTp.businessDay === undefined) {
+			return {
+				timeWeight: anchor.timeWeight,
+				time: { timestamp: virtualKey } as unknown as InternalHorzScaleItem,
+				originalTime,
+			};
+		}
+
+		return {
+			timeWeight: anchor.timeWeight,
+			time: this._horzScaleBehavior.convertHorzItemToInternal(originalTime),
+			originalTime,
+		};
+	}
+
 	private _rightOffsetForCoordinate(x: Coordinate): number {
 		return (this._width - 1 - x) / this._barSpacing;
 	}
@@ -1018,6 +1135,15 @@ export class TimeScale<HorzScaleItem> implements ITimeScale {
 			this._resetTimeMarksCache();
 			this._updateConflationFactor();
 		}
+	}
+
+	private _flushSuppressedLogicalRangeChanged(): void {
+		if (!this._logicalRangeChangedWhileSuppressed) {
+			return;
+		}
+
+		this._logicalRangeChangedWhileSuppressed = false;
+		this._logicalRangeChanged.fire();
 	}
 
 	private _updateVisibleRange(): void {
@@ -1163,6 +1289,93 @@ export class TimeScale<HorzScaleItem> implements ITimeScale {
 		return this._horzScaleBehavior.formatTickmark(tickMark, this._localizationOptions);
 	}
 
+	private _internalTimeToDate(time: InternalHorzScaleItem): Date {
+		const tp = time as unknown as TimePoint;
+		if (tp.businessDay !== undefined) {
+			const bd = tp.businessDay;
+			return new Date(Date.UTC(bd.year, bd.month - 1, bd.day));
+		}
+		return new Date(tp.timestamp * 1000);
+	}
+
+	/**
+	 * Tick marks for virtual indices beyond loaded data (future / past whitespace).
+	 */
+	private _buildVirtualTickMarks(
+		firstBar: TimePointIndex,
+		lastBar: TimePointIndex,
+		maxIndexesPerMark: number,
+		showAll: boolean,
+		realItems: readonly TickMark[]
+	): TickMark[] {
+		const lastIdx = this._lastIndex();
+		const firstIdx = this._firstIndex();
+		if (lastIdx === null || firstIdx === null || this._points.length === 0) {
+			return [];
+		}
+
+		const lastRealIndex = lastIdx as number;
+		const firstRealIndex = firstIdx as number;
+		const rangeStart = firstBar as number;
+		const rangeEnd = lastBar as number;
+
+		let lastIncludedIndex = rangeStart - maxIndexesPerMark;
+		for (const tm of realItems) {
+			const idx = tm.index as number;
+			if (idx >= rangeStart && idx <= rangeEnd && idx <= lastRealIndex) {
+				lastIncludedIndex = idx;
+			}
+		}
+		if (lastIncludedIndex < rangeStart) {
+			lastIncludedIndex = lastRealIndex;
+		}
+
+		const marks: TickMark[] = [];
+
+		const addVirtualIndex = (index: number): void => {
+			if (index < rangeStart || index > rangeEnd) {
+				return;
+			}
+			if (index >= firstRealIndex && index <= lastRealIndex) {
+				return;
+			}
+
+			const point = this.indexToTimeScalePoint(index as TimePointIndex);
+			if (point === null) {
+				return;
+			}
+
+			const prevPoint = this.indexToTimeScalePoint((index - 1) as TimePointIndex);
+			if (prevPoint === null) {
+				return;
+			}
+
+			const spacing = index - lastIncludedIndex;
+			if (!showAll && spacing < maxIndexesPerMark) {
+				return;
+			}
+
+			const weight = weightByTime(
+				this._internalTimeToDate(point.time),
+				this._internalTimeToDate(prevPoint.time)
+			) as TickMarkWeightValue;
+
+			marks.push({
+				index: index as TimePointIndex,
+				time: point.time,
+				weight,
+				originalTime: point.originalTime,
+			});
+			lastIncludedIndex = index;
+		};
+
+		for (let index = Math.max(rangeStart, lastRealIndex + 1); index <= rangeEnd; index++) {
+			addVirtualIndex(index);
+		}
+
+		return marks;
+	}
+
 	private _setVisibleRange(newVisibleRange: TimeScaleVisibleRange): void {
 		const oldVisibleRange = this._visibleRange;
 		this._visibleRange = newVisibleRange;
@@ -1172,7 +1385,11 @@ export class TimeScale<HorzScaleItem> implements ITimeScale {
 		}
 
 		if (!areRangesEqual(oldVisibleRange.logicalRange(), this._visibleRange.logicalRange())) {
-			this._logicalRangeChanged.fire();
+			if (this._suppressLogicalRangeChanged) {
+				this._logicalRangeChangedWhileSuppressed = true;
+			} else {
+				this._logicalRangeChanged.fire();
+			}
 		}
 
 		// TODO: reset only coords in case when this._visibleBars has not been changed

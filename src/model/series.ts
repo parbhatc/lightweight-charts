@@ -31,6 +31,7 @@ import { PrimitiveHoveredItem, PrimitivePaneViewZOrder } from './ipane-primitive
 import { FirstValue } from './iprice-data-source';
 import { ISeries, LastValueDataInternalResult, LastValueDataInternalResultWithoutData, MarkerData, SeriesDataAtTypeMap } from './iseries';
 import { ISeriesPrimitiveBase } from './iseries-primitive';
+import { OrderLineOptions } from './order-line-options';
 import { Pane } from './pane';
 import { PlotRowValueIndex } from './plot-data';
 import { MismatchDirection } from './plot-list';
@@ -302,11 +303,47 @@ export class Series<T extends SeriesType> extends PriceDataSource implements IDe
 		this.model().lightUpdate();
 	}
 
+	public prependData(data: readonly SeriesPlotRow<T>[], updateInfo?: SeriesUpdateInfo): void {
+		if (data.length === 0) {
+			return;
+		}
+
+		this._data.prependRows(data);
+
+		this._conflationByFactorCache.clear();
+
+		this._paneView.update('data');
+
+		const sourcePane = this.model().paneForSource(this);
+		this.model().recalculatePane(sourcePane);
+		this.model().updateSource(this);
+		this.model().lightUpdate();
+	}
+
 	public createPriceLine(options: PriceLineOptions): CustomPriceLine {
 		const result = new CustomPriceLine(this, options);
 		this._customPriceLines.push(result);
 		this.model().updateSource(this);
 		return result;
+	}
+
+	public createOrderLine(options: OrderLineOptions): CustomPriceLine {
+		const result = new CustomPriceLine(this, {
+			...options,
+			axisSubtitleText: '',
+			order: true,
+		});
+		this._customPriceLines.push(result);
+		this.model().updateSource(this);
+		return result;
+	}
+
+	public removeOrderLine(line: CustomPriceLine): void {
+		this.removePriceLine(line);
+	}
+
+	public orderLines(): CustomPriceLine[] {
+		return this._customPriceLines.filter((line: CustomPriceLine) => line.isOrderLine());
 	}
 
 	public removePriceLine(line: CustomPriceLine): void {
@@ -453,6 +490,9 @@ export class Series<T extends SeriesType> extends PriceDataSource implements IDe
 	public topPaneViews(pane: Pane): readonly IPaneView[] {
 		const res: IPaneView[] = [];
 		extractPrimitivePaneViews(this._primitives, primitivePaneViewsExtractor, 'top', res);
+
+		const orderLines = this._customPriceLines.filter((line: CustomPriceLine) => line.isOrderLine());
+		res.push(...orderLines.flatMap((line: CustomPriceLine) => [line.paneView(), line.orderPillsPaneView()]));
 		const animationPaneView = this._lastPriceAnimationPaneView;
 		if (animationPaneView === null || !animationPaneView.visible()) {
 			return res;
@@ -485,7 +525,9 @@ export class Series<T extends SeriesType> extends PriceDataSource implements IDe
 			this._priceLineView
 		);
 
-		const priceLineViews = this._customPriceLines.map((line: CustomPriceLine) => line.paneView());
+		const priceLineViews = this._customPriceLines
+			.filter((line: CustomPriceLine) => !line.isOrderLine())
+			.map((line: CustomPriceLine) => line.paneView());
 		res.push(...priceLineViews);
 		extractPrimitivePaneViews(this._primitives, primitivePaneViewsExtractor, 'normal', res);
 
@@ -508,8 +550,8 @@ export class Series<T extends SeriesType> extends PriceDataSource implements IDe
 
 		const topPaneViews: IPaneView[] = [];
 		topPaneViews.push(...main.topPaneViews, this._priceLineView);
-		const priceLineViews = this._customPriceLines.map((line: CustomPriceLine) => line.paneView());
-		topPaneViews.push(...priceLineViews);
+		const orderLines = this._customPriceLines.filter((line: CustomPriceLine) => line.isOrderLine());
+		topPaneViews.push(...orderLines.flatMap((line: CustomPriceLine) => [line.paneView(), line.orderPillsPaneView()]));
 
 		return {
 			normalPaneViews,

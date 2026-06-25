@@ -48,7 +48,8 @@ export class CustomPriceLinePriceAxisView extends PriceAxisView {
 
 		paneRendererData.borderColor = series.model().backgroundColorAtYPercentFromTop(y / series.priceScale().height());
 
-		axisRendererData.text = this._formatPrice(options.price);
+		axisRendererData.text = options.axisLabelText || this._formatPrice(options.price);
+		axisRendererData.subtitleText = options.axisSubtitleText || undefined;
 		axisRendererData.visible = true;
 
 		const colors = this._series
@@ -61,6 +62,7 @@ export class CustomPriceLinePriceAxisView extends PriceAxisView {
 		axisRendererData.color = textColor; // price text
 		paneRendererData.color = textColor; // title text
 
+		commonData.fixedCoordinate = undefined;
 		commonData.coordinate = y;
 	}
 

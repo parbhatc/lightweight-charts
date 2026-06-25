@@ -1,7 +1,10 @@
 import { ensureNotNull } from '../../helpers/assertions';
 
 import { IChartModelBase } from '../../model/chart-model';
+import { Coordinate } from '../../model/coordinate';
 import { Crosshair, CrosshairMode, TimeAndCoordinateProvider } from '../../model/crosshair';
+import { TimeScalePoint } from '../../model/time-data';
+import { ITimeScale } from '../../model/time-scale';
 import { TimeAxisViewRenderer, TimeAxisViewRendererData } from '../../renderers/time-axis-view-renderer';
 
 import { ITimeAxisView } from './itime-axis-view';
@@ -43,6 +46,19 @@ export class CrosshairTimeAxisView implements ITimeAxisView {
 		return this._renderer;
 	}
 
+	private _resolveTimeScalePoint(timeScale: ITimeScale): TimeScalePoint | null {
+		const value = this._valueProvider();
+		if (value !== null && Number.isFinite(value.coordinate)) {
+			const index = timeScale.coordinateToIndex(value.coordinate as Coordinate);
+			const point = timeScale.indexToTimeScalePoint(index);
+			if (point !== null) {
+				return point;
+			}
+		}
+
+		return timeScale.indexToTimeScalePoint(this._crosshair.appliedIndex());
+	}
+
 	private _updateImpl(): void {
 		const data = this._rendererData;
 		data.visible = false;
@@ -70,7 +86,10 @@ export class CrosshairTimeAxisView implements ITimeAxisView {
 		}
 
 		data.coordinate = value.coordinate;
-		const currentTime = timeScale.indexToTimeScalePoint(this._crosshair.appliedIndex());
+		const currentTime = this._resolveTimeScalePoint(timeScale);
+		if (currentTime === null) {
+			return;
+		}
 		data.text = timeScale.formatDateTime(ensureNotNull(currentTime));
 		data.visible = true;
 

@@ -14,6 +14,8 @@ export { ColorType } from './model/layout-options';
 
 export { isBusinessDay, isUTCTimestamp } from './model/horz-scale-behavior-time/types';
 export { TickMarkType } from './model/horz-scale-behavior-time/types';
+export { createFastTimezoneProvider } from './model/timezone';
+export type { ITimezoneProvider, TimezoneTransition } from './model/timezone';
 export const customSeriesDefaultOptions: CustomSeriesOptions = {
 	...seriesOptionsDefaults,
 	...customStyleDefaults,

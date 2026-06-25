@@ -4,6 +4,7 @@ import { assert } from '../helpers/assertions';
 
 import { isFulfilledData, OhlcData, SeriesDataItemTypeMap } from './data-consumer';
 import { IHorzScaleBehavior } from './ihorz-scale-behavior';
+import { CreateOrderLineOptions } from './order-line-options';
 import { CreatePriceLineOptions } from './price-line-options';
 import { SeriesType } from './series-options';
 
@@ -13,6 +14,14 @@ export function checkPriceLineOptions(options: CreatePriceLineOptions): void {
 	}
 
 	assert(typeof options.price === 'number', `the type of 'price' price line's property must be a number, got '${typeof options.price}'`);
+}
+
+export function checkOrderLineOptions(options: CreateOrderLineOptions): void {
+	if (process.env.NODE_ENV === 'production') {
+		return;
+	}
+
+	assert(typeof options.price === 'number', `the type of 'price' order line's property must be a number, got '${typeof options.price}'`);
 }
 
 export function checkItemsAreOrdered<HorzScaleItem>(data: readonly (SeriesDataItemTypeMap<HorzScaleItem>[SeriesType])[], bh: IHorzScaleBehavior<HorzScaleItem>, allowDuplicates: boolean = false): void {

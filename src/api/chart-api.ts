@@ -232,6 +232,10 @@ export class ChartApi<HorzScaleItem> implements IChartApiBase<HorzScaleItem>, Da
 		this._sendUpdateToChart(this._dataLayer.setSeriesData(series, data));
 	}
 
+	public prependData<TSeriesType extends SeriesType>(series: Series<TSeriesType>, data: SeriesDataItemTypeMap<HorzScaleItem>[TSeriesType][]): void {
+		this._sendUpdateToChart(this._dataLayer.prependSeriesData(series, data));
+	}
+
 	public updateData<TSeriesType extends SeriesType>(series: Series<TSeriesType>, data: SeriesDataItemTypeMap<HorzScaleItem>[TSeriesType], historicalUpdate: boolean): void {
 		this._sendUpdateToChart(this._dataLayer.updateSeriesData(series, data, historicalUpdate));
 	}
@@ -412,7 +416,13 @@ export class ChartApi<HorzScaleItem> implements IChartApiBase<HorzScaleItem>, Da
 		const model = this._chartWidget.model();
 
 		model.updateTimeScale(update.timeScale.baseIndex, update.timeScale.points, update.timeScale.firstChangedPointIndex);
-		update.series.forEach((value: SeriesChanges, series: Series<SeriesType>) => series.setData(value.data, value.info));
+		update.series.forEach((value: SeriesChanges, series: Series<SeriesType>) => {
+			if (value.prependRows !== undefined && value.prependRows.length > 0) {
+				series.prependData(value.prependRows, value.info);
+			} else {
+				series.setData(value.data, value.info);
+			}
+		});
 
 		model.timeScale().recalculateIndicesWithData();
 		model.recalculateAllPanes();
