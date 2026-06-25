@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>LWC — Order line testing</title>
+    <link rel="stylesheet" href="/testing/css/app.css" />
+    <script type="importmap">
+      {
+        "imports": {
+          "lightweight-charts": "/dist/lightweight-charts.standalone.development.mjs"
+        }
+      }
+    </script>
+  </head>
+  <body>
+    <header class="lwc-test-toolbar" aria-label="LWC test toolbar">
+      <span class="lwc-test-toolbar__title">lightweight-charts</span>
+      <div class="lwc-test-toolbar__sep" aria-hidden="true"></div>
+      <div id="timeframe-picker"></div>
+      <div class="lwc-test-toolbar__sep" aria-hidden="true"></div>
+      <button type="button" id="load-history-btn" class="lwc-test-toolbar__btn" title="Load older candles">
+        Load history
+      </button>
+      <span id="history-status" class="lwc-test-toolbar__status" aria-live="polite"></span>
+      <label class="lwc-test-toolbar__check">
+        <input type="checkbox" id="bid-ask-toggle" checked />
+        Bid/Ask
+      </label>
+      <span class="lwc-test-toolbar__grow"></span>
+      <span id="toolbar-fps" class="lwc-test-toolbar__fps" aria-live="polite">FPS —</span>
+      <span class="lwc-test-toolbar__hint">Console: __LWC_TEST_ORDER__ · __LWC_PRICE_LINE_TEST__ · __LWC_DEBUG__</span>
+    </header>
+    <main class="lwc-test-stage">
+      <div id="chart" class="lwc-test-chart" aria-label="Chart"></div>
+    </main>
+    <script type="module" src="/testing/js/main.js"></script>
+  </body>
+</html>
