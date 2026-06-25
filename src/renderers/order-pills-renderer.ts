@@ -277,35 +277,41 @@ export class OrderPillsRenderer implements IPaneRenderer {
 		return row;
 	}
 
-	private _bitmapCacheKeyFor(data: OrderPillsRendererData, row: RowLayout): string {
-		return this._layoutCacheKeyFor(data) + '\0' + row.totalW;
-	}
-
 	private _ensureBitmap(
 		row: RowLayout,
-		data: OrderPillsRendererData
+		data: OrderPillsRendererData,
+		horizontalPixelRatio: number
 	): HTMLCanvasElement {
-		const key = this._bitmapCacheKeyFor(data, row);
+		const ratio = Math.max(1, horizontalPixelRatio || 1);
+		const mediaW = row.totalW;
+		const mediaH = ROW_H;
+		const bmpW = Math.max(1, Math.ceil(mediaW * ratio));
+		const bmpH = Math.max(1, Math.ceil(mediaH * ratio));
+		const key = this._layoutCacheKeyFor(data) + '\0' + mediaW + '\0' + ratio;
+
 		if (
 			this._bitmap !== null &&
 			key === this._bitmapKey &&
-			this._bitmap.width === row.totalW &&
-			this._bitmap.height === ROW_H
+			this._bitmap.width === bmpW &&
+			this._bitmap.height === bmpH
 		) {
 			return this._bitmap;
 		}
 
 		let canvas = this._bitmap;
-		if (canvas === null || canvas.width !== row.totalW || canvas.height !== ROW_H) {
+		if (canvas === null || canvas.width !== bmpW || canvas.height !== bmpH) {
 			canvas = document.createElement('canvas');
 			this._bitmap = canvas;
 		}
 
-		canvas.width = row.totalW;
-		canvas.height = ROW_H;
+		canvas.width = bmpW;
+		canvas.height = bmpH;
 		const bctx = canvas.getContext('2d');
 		if (bctx !== null) {
-			bctx.clearRect(0, 0, row.totalW, ROW_H);
+			bctx.setTransform(1, 0, 0, 1, 0, 0);
+			bctx.clearRect(0, 0, bmpW, bmpH);
+			bctx.scale(ratio, ratio);
+			bctx.imageSmoothingEnabled = true;
 			drawRowContents(bctx, row, data, 0);
 		}
 
@@ -322,6 +328,7 @@ export class OrderPillsRenderer implements IPaneRenderer {
 			const ctx = scope.context;
 			const data = this._data as OrderPillsRendererData;
 			const y = Math.round(data.y);
+			const ratio = window.devicePixelRatio || 1;
 
 			if (data.lineVisible !== false && data.paneWidth > 0) {
 				ctx.save();
@@ -342,13 +349,13 @@ export class OrderPillsRenderer implements IPaneRenderer {
 
 			const top = Math.round(data.y - ROW_H / 2);
 			const x = Math.round(row.rowLeft);
-			const bitmap = this._ensureBitmap(row, data);
+			const bitmap = this._ensureBitmap(row, data, ratio);
 
 			ctx.save();
 			if (data.pills.moving) {
 				ctx.globalAlpha = 0.92;
 			}
-			ctx.drawImage(bitmap, x, top);
+			ctx.drawImage(bitmap, x, top, row.totalW, ROW_H);
 			ctx.restore();
 		});
 	}
